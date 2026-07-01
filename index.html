@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>균형 유지 · 전자수준기</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg-0:#05070a;
+    --bg-1:#0b0f16;
+    --panel:#10151d;
+    --line:#1c2531;
+    --amber:#ffb020;
+    --amber-dim:#8a6420;
+    --green:#3ddc84;
+    --red:#ff4d5e;
+    --text:#e8edf4;
+    --text-dim:#5f6c7d;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{
+    margin:0; padding:0; width:100%; height:100%;
+    background:var(--bg-0); color:var(--text);
+    font-family:'Pretendard', sans-serif;
+    overflow:hidden; overscroll-behavior:none;
+    touch-action:none;
+  }
+  #app{
+    position:fixed; inset:0;
+    display:flex; flex-direction:column;
+  }
+  #stage{
+    position:absolute; inset:0; width:100%; height:100%; display:block;
+  }
+
+  /* ---------- HUD ---------- */
+  #hud{
+    position:absolute; top:0; left:0; right:0;
+    display:flex; justify-content:space-between; align-items:flex-start;
+    padding: max(14px, env(safe-area-inset-top)) 16px 0 16px;
+    pointer-events:none;
+    opacity:0; transition:opacity .3s ease;
+  }
+  #hud.show{ opacity:1; }
+  .hud-block{
+    background:rgba(16,21,29,.72);
+    border:1px solid var(--line);
+    border-radius:10px;
+    padding:8px 12px;
+    backdrop-filter: blur(6px);
+  }
+  .hud-label{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:10px; letter-spacing:.14em; color:var(--text-dim);
+    text-transform:uppercase; margin-bottom:2px;
+  }
+  .hud-value{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:20px; font-weight:600; color:var(--amber);
+    font-variant-numeric: tabular-nums;
+  }
+  .hud-value.small{ font-size:14px; color:var(--text); }
+
+  #invertToggle{
+    position:absolute; top:0; right:0;
+    margin: max(14px, env(safe-area-inset-top)) 16px 0 0;
+    pointer-events:auto;
+  }
+
+  /* ---------- Overlays ---------- */
+  .overlay{
+    position:absolute; inset:0;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    padding:24px;
+    background:radial-gradient(ellipse at 50% 30%, rgba(20,26,36,.96) 0%, rgba(5,7,10,.98) 70%);
+    text-align:center;
+    transition: opacity .35s ease, visibility .35s ease;
+  }
+  .overlay.hidden{ opacity:0; visibility:hidden; pointer-events:none; }
+
+  .eyebrow{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:11px; letter-spacing:.22em; color:var(--amber);
+    text-transform:uppercase; margin-bottom:10px;
+  }
+  h1{
+    font-size:26px; font-weight:700; margin:0 0 6px 0; letter-spacing:-.01em;
+  }
+  .desc{
+    color:var(--text-dim); font-size:14px; line-height:1.6; max-width:320px; margin:0 0 26px 0;
+  }
+  .desc b{ color:var(--text); font-weight:600; }
+
+  .diagram{
+    width:120px; height:120px; margin-bottom:22px; opacity:.9;
+  }
+
+  .btn{
+    font-family:'Pretendard', sans-serif;
+    font-weight:600; font-size:16px;
+    color:var(--bg-0);
+    background:var(--amber);
+    border:none; border-radius:12px;
+    padding:15px 34px;
+    cursor:pointer;
+    box-shadow: 0 0 24px rgba(255,176,32,.25);
+    transition: transform .12s ease, box-shadow .12s ease;
+  }
+  .btn:active{ transform:scale(.96); box-shadow:0 0 12px rgba(255,176,32,.18); }
+  .btn.ghost{
+    background:transparent; color:var(--text); border:1px solid var(--line);
+    box-shadow:none; font-size:13px; padding:10px 20px; margin-top:14px;
+  }
+
+  .sens-row{
+    display:flex; gap:8px; margin:18px 0 6px 0;
+  }
+  .sens-opt{
+    font-family:'IBM Plex Mono', monospace; font-size:12px;
+    color:var(--text-dim); border:1px solid var(--line); border-radius:8px;
+    padding:8px 14px; cursor:pointer; background:var(--panel);
+    transition: all .15s ease;
+  }
+  .sens-opt.active{ color:var(--bg-0); background:var(--amber); border-color:var(--amber); font-weight:600; }
+  .sens-caption{ font-size:10px; letter-spacing:.12em; color:var(--text-dim); text-transform:uppercase; margin-bottom:2px; font-family:'IBM Plex Mono', monospace;}
+
+  .toggle-row{ display:flex; gap:8px; margin-bottom:22px; }
+  .toggle-opt{
+    font-family:'IBM Plex Mono', monospace; font-size:11px;
+    color:var(--text-dim); border:1px solid var(--line); border-radius:8px;
+    padding:7px 12px; cursor:pointer; background:var(--panel);
+  }
+  .toggle-opt.active{ color:var(--green); border-color:var(--green); }
+
+  .result-row{
+    display:flex; gap:14px; margin-bottom:24px;
+  }
+  .result-card{
+    background:var(--panel); border:1px solid var(--line); border-radius:12px;
+    padding:16px 22px; min-width:110px;
+  }
+  .result-card .num{
+    font-family:'IBM Plex Mono', monospace; font-size:26px; font-weight:700; color:var(--amber);
+    font-variant-numeric: tabular-nums;
+  }
+  .result-card .lbl{
+    font-size:11px; color:var(--text-dim); margin-top:4px; letter-spacing:.06em;
+  }
+  .best-flag{
+    color:var(--green); font-size:12px; font-weight:600; margin-bottom:14px;
+    font-family:'IBM Plex Mono', monospace; letter-spacing:.08em;
+  }
+
+  #permWarn{
+    margin-top:14px; font-size:12px; color:var(--red); display:none;
+  }
+
+  @media (min-width:520px){
+    #app{ align-items:center; }
+    #stage{ position:relative; max-width:420px; height:100%; border-left:1px solid var(--line); border-right:1px solid var(--line); }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="stage"></canvas>
+
+  <div id="hud">
+    <div class="hud-block">
+      <div class="hud-label">생존시간</div>
+      <div class="hud-value" id="timeVal">0.00s</div>
+    </div>
+    <div class="hud-block">
+      <div class="hud-label">최고기록</div>
+      <div class="hud-value small" id="bestVal">0.00s</div>
+    </div>
+  </div>
+
+  <div id="debugPanel" style="position:absolute; bottom:0; left:0; right:0; padding:10px 14px calc(10px + env(safe-area-inset-bottom)) 14px; background:rgba(10,14,20,.85); border-top:1px solid #1c2531; font-family:'IBM Plex Mono',monospace; font-size:11px; color:#5f6c7d; display:none; z-index:50;">
+    <div id="debugStatus" style="color:#ffb020; margin-bottom:4px;">센서 대기 중…</div>
+    <div>gamma(좌우): <span id="dbgGamma">-</span> &nbsp;|&nbsp; beta(앞뒤): <span id="dbgBeta">-</span></div>
+    <div>이벤트 수신: <span id="dbgCount">0</span>회</div>
+  </div>
+
+  <!-- START OVERLAY -->
+  <div class="overlay" id="startOverlay">
+    <div class="eyebrow">BALANCE INSTRUMENT</div>
+    <h1>균형 유지</h1>
+    <svg class="diagram" viewBox="0 0 120 120" fill="none">
+      <circle cx="60" cy="60" r="52" stroke="#1c2531" stroke-width="2"/>
+      <circle cx="60" cy="60" r="36" stroke="#1c2531" stroke-width="1.5" stroke-dasharray="3 4"/>
+      <circle cx="60" cy="60" r="18" stroke="#ffb020" stroke-width="1.5" opacity="0.5"/>
+      <line x1="60" y1="8" x2="60" y2="20" stroke="#5f6c7d" stroke-width="1.5"/>
+      <line x1="60" y1="100" x2="60" y2="112" stroke="#5f6c7d" stroke-width="1.5"/>
+      <line x1="8" y1="60" x2="20" y2="60" stroke="#5f6c7d" stroke-width="1.5"/>
+      <line x1="100" y1="60" x2="112" y2="60" stroke="#5f6c7d" stroke-width="1.5"/>
+      <circle cx="34" cy="34" r="9" fill="#ffb020"/>
+      <circle cx="34" cy="34" r="9" fill="url(#g)" opacity="0.6"/>
+      <defs>
+        <radialGradient id="g" cx="0.35" cy="0.3" r="0.8">
+          <stop offset="0%" stop-color="#fff" stop-opacity="0.9"/>
+          <stop offset="100%" stop-color="#fff" stop-opacity="0"/>
+        </radialGradient>
+      </defs>
+    </svg>
+    <div class="desc">휴대폰을 <b>쟁반처럼 평평하게</b> 들고 기울여, 공(기포)을 화면 중앙 크로스헤어에 맞추고 유지하세요.<br>공이 화면 밖으로 나가면 즉시 종료됩니다.</div>
+
+    <div>
+      <div class="sens-caption">감도</div>
+      <div class="sens-row" id="sensRow">
+        <div class="sens-opt" data-v="0.16">낮음</div>
+        <div class="sens-opt active" data-v="0.28">보통</div>
+        <div class="sens-opt" data-v="0.44">높음</div>
+      </div>
+    </div>
+
+    <div class="toggle-row">
+      <div class="toggle-opt" id="invX">X축 반전</div>
+      <div class="toggle-opt" id="invY">Y축 반전</div>
+    </div>
+
+    <button class="btn" id="startBtn">시작하기</button>
+    <div id="permWarn">이 기기/브라우저에서는 방향 센서를 지원하지 않아요.</div>
+  </div>
+
+  <!-- GAMEOVER OVERLAY -->
+  <div class="overlay hidden" id="overOverlay">
+    <div class="eyebrow">SIGNAL LOST</div>
+    <h1>게임 오버</h1>
+    <div class="best-flag" id="bestFlag" style="visibility:hidden;">★ 신기록 달성</div>
+    <div class="result-row">
+      <div class="result-card">
+        <div class="num" id="finalTime">0.00s</div>
+        <div class="lbl">생존시간</div>
+      </div>
+      <div class="result-card">
+        <div class="num" id="finalBest">0.00s</div>
+        <div class="lbl">최고기록</div>
+      </div>
+    </div>
+    <button class="btn" id="retryBtn">다시 시작</button>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  var canvas = document.getElementById('stage');
+  var ctx = canvas.getContext('2d');
+  var DPR = Math.min(window.devicePixelRatio || 1, 2.5);
+  var W = 0, H = 0;
+
+  function resize(){
+    var rect = canvas.getBoundingClientRect();
+    W = rect.width; H = rect.height;
+    canvas.width = Math.round(W * DPR);
+    canvas.height = Math.round(H * DPR);
+    ctx.setTransform(DPR,0,0,DPR,0,0);
+  }
+  window.addEventListener('resize', resize);
+  window.addEventListener('orientationchange', function(){ setTimeout(resize, 200); });
+
+  // ---------- state ----------
+  var STATE = { READY:'ready', PLAYING:'playing', OVER:'over' };
+  var state = STATE.READY;
+
+  var SENS = 0.28;
+  var DAMPING = 0.94;
+  var BALL_R = 15;
+  var invertX = false, invertY = false;
+
+  var ball = { x:0, y:0, vx:0, vy:0 };
+  var tiltX = 0, tiltY = 0; // smoothed gamma/beta
+  var startTime = 0, elapsed = 0;
+  var BEST_KEY = 'balanceGameBest';
+  var best = parseFloat(localStorage.getItem(BEST_KEY) || '0');
+
+  var hud = document.getElementById('hud');
+  var timeVal = document.getElementById('timeVal');
+  var bestVal = document.getElementById('bestVal');
+  var startOverlay = document.getElementById('startOverlay');
+  var overOverlay = document.getElementById('overOverlay');
+  var startBtn = document.getElementById('startBtn');
+  var retryBtn = document.getElementById('retryBtn');
+  var permWarn = document.getElementById('permWarn');
+  var bestFlag = document.getElementById('bestFlag');
+  var debugPanel = document.getElementById('debugPanel');
+  var debugStatus = document.getElementById('debugStatus');
+  var dbgGamma = document.getElementById('dbgGamma');
+  var dbgBeta = document.getElementById('dbgBeta');
+  var dbgCount = document.getElementById('dbgCount');
+  var eventCount = 0;
+
+  bestVal.textContent = best.toFixed(2) + 's';
+  debugPanel.addEventListener('click', function(){ debugPanel.style.display = 'none'; });
+
+  // sensitivity selector
+  document.getElementById('sensRow').addEventListener('click', function(e){
+    var t = e.target.closest('.sens-opt');
+    if(!t) return;
+    document.querySelectorAll('.sens-opt').forEach(function(el){ el.classList.remove('active'); });
+    t.classList.add('active');
+    SENS = parseFloat(t.dataset.v);
+  });
+  document.getElementById('invX').addEventListener('click', function(){
+    invertX = !invertX; this.classList.toggle('active', invertX);
+  });
+  document.getElementById('invY').addEventListener('click', function(){
+    invertY = !invertY; this.classList.toggle('active', invertY);
+  });
+
+  // ---------- orientation input ----------
+  function onOrient(e){
+    eventCount++;
+    var rawGamma = e.gamma, rawBeta = e.beta;
+    dbgGamma.textContent = (rawGamma === null ? 'null' : rawGamma.toFixed(1));
+    dbgBeta.textContent = (rawBeta === null ? 'null' : rawBeta.toFixed(1));
+    dbgCount.textContent = eventCount;
+    debugStatus.textContent = '센서 데이터 수신 중';
+    debugStatus.style.color = '#3ddc84';
+
+    var gamma = rawGamma || 0; // left-right, -90..90
+    var beta = rawBeta || 0;   // front-back, -180..180
+    // clamp beta to a usable flat-hold range
+    beta = Math.max(-90, Math.min(90, beta));
+    var gx = (invertX ? -1 : 1) * gamma;
+    var gy = (invertY ? -1 : 1) * beta;
+    // low-pass smoothing
+    tiltX += (gx - tiltX) * 0.35;
+    tiltY += (gy - tiltY) * 0.35;
+  }
+
+  function requestSensors(cb){
+    var need = (typeof DeviceOrientationEvent !== 'undefined' &&
+                typeof DeviceOrientationEvent.requestPermission === 'function');
+    if(need){
+      DeviceOrientationEvent.requestPermission().then(function(res){
+        if(res === 'granted'){
+          window.addEventListener('deviceorientation', onOrient);
+          cb(true);
+        } else {
+          cb(false);
+        }
+      }).catch(function(){ cb(false); });
+    } else if('DeviceOrientationEvent' in window){
+      window.addEventListener('deviceorientation', onOrient);
+      cb(true);
+    } else {
+      cb(false);
+    }
+  }
+
+  // ---------- game flow ----------
+  function spawnBall(){
+    var margin = Math.min(W,H) * 0.16;
+    var side = Math.random() < 0.5 ? 'L' : 'R';
+    ball.x = side === 'L' ? margin : (W - margin);
+    ball.y = margin + Math.random() * (Math.min(W,H) * 0.06);
+    ball.vx = 0; ball.vy = 0;
+    tiltX = 0; tiltY = 0;
+  }
+
+  function startGame(){
+    resize();
+    spawnBall();
+    startTime = performance.now();
+    elapsed = 0;
+    state = STATE.PLAYING;
+    startOverlay.classList.add('hidden');
+    overOverlay.classList.add('hidden');
+    hud.classList.add('show');
+  }
+
+  function endGame(){
+    state = STATE.OVER;
+    hud.classList.remove('show');
+    var isBest = elapsed > best;
+    if(isBest){
+      best = elapsed;
+      localStorage.setItem(BEST_KEY, best.toFixed(2));
+    }
+    document.getElementById('finalTime').textContent = elapsed.toFixed(2) + 's';
+    document.getElementById('finalBest').textContent = best.toFixed(2) + 's';
+    bestFlag.style.visibility = isBest ? 'visible' : 'hidden';
+    overOverlay.classList.remove('hidden');
+  }
+
+  startBtn.addEventListener('click', function(){
+    resize();
+    requestSensors(function(ok){
+      if(!ok){
+        permWarn.style.display = 'block';
+        return;
+      }
+      debugPanel.style.display = 'block';
+      debugStatus.textContent = '센서 대기 중…';
+      debugStatus.style.color = '#ffb020';
+      eventCount = 0;
+      setTimeout(function(){
+        if(eventCount === 0){
+          debugStatus.textContent = '이벤트 수신 안 됨 — 실제 폰에서 배포된 https 주소로 열었는지, iOS라면 설정>Safari>동작 및 방향 액세스가 켜져 있는지 확인하세요.';
+          debugStatus.style.color = '#ff4d5e';
+        }
+      }, 2000);
+      startGame();
+    });
+  });
+  retryBtn.addEventListener('click', startGame);
+
+  // ---------- render ----------
+  function drawInstrument(cx, cy, r){
+    ctx.save();
+    ctx.translate(cx, cy);
+
+    // outer rings
+    ctx.strokeStyle = '#1c2531';
+    ctx.lineWidth = 1.5;
+    [1, 0.7].forEach(function(f){
+      ctx.beginPath(); ctx.arc(0,0,r*f,0,Math.PI*2); ctx.stroke();
+    });
+    // target zone
+    ctx.strokeStyle = 'rgba(255,176,32,0.45)';
+    ctx.setLineDash([4,5]);
+    ctx.beginPath(); ctx.arc(0,0,r*0.34,0,Math.PI*2); ctx.stroke();
+    ctx.setLineDash([]);
+
+    // crosshair ticks
+    ctx.strokeStyle = '#3a4658';
+    ctx.lineWidth = 1.5;
+    var tickLen = r * 0.14;
+    [0,90,180,270].forEach(function(deg){
+      var a = deg * Math.PI/180;
+      var x1 = Math.cos(a)*r, y1 = Math.sin(a)*r;
+      var x2 = Math.cos(a)*(r - tickLen), y2 = Math.sin(a)*(r - tickLen);
+      ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+    });
+    ctx.restore();
+  }
+
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+
+    // background grid
+    ctx.fillStyle = '#05070a';
+    ctx.fillRect(0,0,W,H);
+    ctx.strokeStyle = 'rgba(28,37,49,0.5)';
+    ctx.lineWidth = 1;
+    var step = 32;
+    for(var x=0; x<W; x+=step){ ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
+    for(var y=0; y<H; y+=step){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+
+    var cx = W/2, cy = H/2;
+    var instR = Math.min(W,H) * 0.34;
+    drawInstrument(cx, cy, instR);
+
+    if(state === STATE.PLAYING){
+      var dist = Math.hypot(ball.x - cx, ball.y - cy);
+      var norm = Math.min(1, dist / (instR));
+      var color;
+      if(norm < 0.25) color = '#3ddc84';
+      else if(norm < 0.65) color = '#ffb020';
+      else color = '#ff4d5e';
+
+      // glow
+      var grad = ctx.createRadialGradient(ball.x, ball.y, 0, ball.x, ball.y, BALL_R*3.2);
+      grad.addColorStop(0, color + 'aa');
+      grad.addColorStop(1, color + '00');
+      ctx.fillStyle = grad;
+      ctx.beginPath(); ctx.arc(ball.x, ball.y, BALL_R*3.2, 0, Math.PI*2); ctx.fill();
+
+      // bubble
+      ctx.fillStyle = color;
+      ctx.beginPath(); ctx.arc(ball.x, ball.y, BALL_R, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.55)';
+      ctx.beginPath(); ctx.arc(ball.x - BALL_R*0.32, ball.y - BALL_R*0.32, BALL_R*0.32, 0, Math.PI*2); ctx.fill();
+    }
+  }
+
+  // ---------- loop ----------
+  var lastT = 0;
+  function loop(t){
+    requestAnimationFrame(loop);
+    var dt = lastT ? Math.min((t - lastT)/16.6667, 3) : 1;
+    lastT = t;
+
+    if(state === STATE.PLAYING){
+      ball.vx += tiltX * SENS * dt;
+      ball.vy += tiltY * SENS * dt;
+      ball.vx *= DAMPING;
+      ball.vy *= DAMPING;
+      ball.x += ball.vx * dt;
+      ball.y += ball.vy * dt;
+
+      elapsed = (t - startTime) / 1000;
+      timeVal.textContent = elapsed.toFixed(2) + 's';
+      bestVal.textContent = Math.max(best, elapsed).toFixed(2) + 's';
+
+      if(ball.x < -BALL_R || ball.x > W + BALL_R || ball.y < -BALL_R || ball.y > H + BALL_R){
+        endGame();
+      }
+    }
+    draw();
+  }
+
+  resize();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
