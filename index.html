@@ -173,9 +173,12 @@
       <div class="hud-label">생존시간</div>
       <div class="hud-value" id="timeVal">0.00s</div>
     </div>
-    <div class="hud-block">
-      <div class="hud-label">최고기록</div>
-      <div class="hud-value small" id="bestVal">0.00s</div>
+    <div style="display:flex; align-items:flex-start; gap:8px;">
+      <div class="hud-block">
+        <div class="hud-label">최고기록</div>
+        <div class="hud-value small" id="bestVal">0.00s</div>
+      </div>
+      <button id="endBtn" style="pointer-events:auto; font-family:'IBM Plex Mono',monospace; font-size:11px; color:#5f6c7d; background:rgba(16,21,29,.72); border:1px solid #1c2531; border-radius:10px; padding:8px 12px; cursor:pointer;">종료</button>
     </div>
   </div>
 
@@ -206,14 +209,14 @@
         </radialGradient>
       </defs>
     </svg>
-    <div class="desc">휴대폰을 <b>쟁반처럼 평평하게</b> 들고 기울여, 공(기포)을 화면 중앙 크로스헤어에 맞추고 유지하세요.<br>공이 화면 밖으로 나가면 즉시 종료됩니다.</div>
+    <div class="desc">휴대폰을 <b>쟁반처럼 평평하게</b> 들고 기울여, 공(기포)을 화면 중앙 크로스헤어에 맞추고 유지하세요.<br>공은 화면 가장자리에 부딪히면 튕겨 나옵니다. 기록을 확인하려면 우측 상단 <b>종료</b> 버튼을 누르세요.</div>
 
     <div>
       <div class="sens-caption">감도</div>
       <div class="sens-row" id="sensRow">
-        <div class="sens-opt" data-v="0.16">낮음</div>
-        <div class="sens-opt active" data-v="0.28">보통</div>
-        <div class="sens-opt" data-v="0.44">높음</div>
+        <div class="sens-opt" data-v="0.08">낮음</div>
+        <div class="sens-opt active" data-v="0.14">보통</div>
+        <div class="sens-opt" data-v="0.22">높음</div>
       </div>
     </div>
 
@@ -268,8 +271,9 @@
   var STATE = { READY:'ready', PLAYING:'playing', OVER:'over' };
   var state = STATE.READY;
 
-  var SENS = 0.28;
-  var DAMPING = 0.94;
+  var SENS = 0.14;
+  var DAMPING = 0.90;
+  var RESTITUTION = 0.55;
   var BALL_R = 15;
   var invertX = false, invertY = false;
 
@@ -410,6 +414,9 @@
     });
   });
   retryBtn.addEventListener('click', startGame);
+  document.getElementById('endBtn').addEventListener('click', function(){
+    if(state === STATE.PLAYING) endGame();
+  });
 
   // ---------- render ----------
   function drawInstrument(cx, cy, r){
@@ -495,13 +502,15 @@
       ball.x += ball.vx * dt;
       ball.y += ball.vy * dt;
 
+      // 외곽 바운드 처리 (반발계수 RESTITUTION만큼 감쇠되어 튕김)
+      if(ball.x - BALL_R < 0){ ball.x = BALL_R; ball.vx = -ball.vx * RESTITUTION; }
+      if(ball.x + BALL_R > W){ ball.x = W - BALL_R; ball.vx = -ball.vx * RESTITUTION; }
+      if(ball.y - BALL_R < 0){ ball.y = BALL_R; ball.vy = -ball.vy * RESTITUTION; }
+      if(ball.y + BALL_R > H){ ball.y = H - BALL_R; ball.vy = -ball.vy * RESTITUTION; }
+
       elapsed = (t - startTime) / 1000;
       timeVal.textContent = elapsed.toFixed(2) + 's';
       bestVal.textContent = Math.max(best, elapsed).toFixed(2) + 's';
-
-      if(ball.x < -BALL_R || ball.x > W + BALL_R || ball.y < -BALL_R || ball.y > H + BALL_R){
-        endGame();
-      }
     }
     draw();
   }
