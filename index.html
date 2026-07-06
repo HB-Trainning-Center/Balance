@@ -561,7 +561,7 @@
     windTorque = 0; windTarget = 0; nextWindChangeAt = 0;
     elapsed = 0; holdTimer = 0; totalInRange = 0; devSum = 0; devCount = 0;
     levelDone = false;
-    controlInput = 0; keyLeft=false; keyRight=false; dragActive=false;
+    rawTilt = 0; keyLeft=false; keyRight=false; dragActive=false;
 
     $('hud-level-num').textContent = cfg.id;
     $('wind-badge').style.display = cfg.wind ? 'flex' : 'none';
