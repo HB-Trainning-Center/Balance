@@ -55,6 +55,21 @@
   .blob-b{ width:220px; height:220px; bottom:-40px; right:-50px; background:rgba(47,216,245,0.22); animation-delay:-6s; animation-duration:18s; }
   @keyframes floatBlob{ 0%,100%{ transform:translate(0,0); } 50%{ transform:translate(24px,-28px); } }
 
+  /* portrait-lock fallback: block landscape with a rotate prompt */
+  #rotate-overlay{
+    display:none; position:fixed; inset:0; z-index:9999;
+    flex-direction:column; align-items:center; justify-content:center; gap:10px;
+    background:linear-gradient(180deg, var(--bg-void-2), var(--bg-void));
+    text-align:center; padding:24px;
+  }
+  .rotate-icon{ font-size:56px; animation:rotateHint 2s ease-in-out infinite; }
+  @keyframes rotateHint{ 0%,100%{ transform:rotate(-12deg); } 50%{ transform:rotate(78deg); } }
+  .rotate-text{ font-family:var(--display); font-size:24px; color:var(--text-hi); }
+  .rotate-sub{ font-size:13px; color:var(--text-mid); }
+  @media (orientation: landscape) and (max-height: 600px){
+    #rotate-overlay{ display:flex; }
+  }
+
   .screen{
     display:none; width:100%; max-width:460px; height:100%;
     flex-direction:column; padding:28px 24px; position:relative; z-index:1;
@@ -240,6 +255,11 @@
 <div id="app">
 <div class="blob blob-a"></div>
 <div class="blob blob-b"></div>
+<div id="rotate-overlay">
+  <div class="rotate-icon">📱</div>
+  <div class="rotate-text">세로 모드로 돌려주세요</div>
+  <div class="rotate-sub">이 게임은 세로 화면에 맞춰져 있어요</div>
+</div>
 
 
   <!-- ============ START ============ -->
@@ -348,19 +368,22 @@
   "use strict";
 
   // ---------------- config ----------------
+  // windAmp is now a MAX ANGLE OFFSET in radians (wind nudges the target lean)
   var LEVELS = [
-    { id:1, wind:false, windAmp:0,   windMin:0,    windMax:0,    label:"바람 없음",
+    { id:1, wind:false, windAmp:0,               windMin:0,    windMax:0,    label:"바람 없음",
       transitionMsg:"레벨 2에서는 약한 바람이 붑니다." },
-    { id:2, wind:true,  windAmp:1.1, windMin:3000, windMax:5000, label:"약한 바람",
+    { id:2, wind:true,  windAmp:10*Math.PI/180,  windMin:3000, windMax:5000, label:"약한 바람",
       transitionMsg:"레벨 3에서는 바람이 더 강해지고, 더 자주 바뀝니다." },
-    { id:3, wind:true,  windAmp:2.3, windMin:1000, windMax:2000, label:"강한 바람",
+    { id:3, wind:true,  windAmp:20*Math.PI/180,  windMin:1000, windMax:2000, label:"강한 바람",
       transitionMsg:"" }
   ];
-  var G = 9.0;
-  var DAMPING = 0.55;
-  var CONTROL_GAIN = 7.6;
+  // game-like control model (not strict physics):
+  // phone tilt -> target lean angle; pendulum springs toward it. wind pushes the target.
+  var MAX_TILT   = 50 * Math.PI/180; // pendulum lean at full phone tilt
+  var STIFFNESS  = 80;   // spring strength toward target (higher = snappier)
+  var SPRING_DAMP = 11;  // damping (lower = bouncier/juicier)
   var SAFE_ANGLE = 12 * Math.PI/180;
-  var SOFT_WALL = 78 * Math.PI/180;
+  var SOFT_WALL  = 78 * Math.PI/180;
   var HOLD_TARGET = 10.0;
   var LEVEL_DURATION = 50.0;
   var CLEAR_MAX = 500, TIME_MAX = 300, STAB_MAX = 200;
@@ -381,7 +404,7 @@
   var rawTilt = 0;               // smoothed sensor tilt, -1..1
   var lastSensorVal = 0;         // raw value for on-screen diagnostics
   var axisSign = 1;              // flip toggle for inverted direction
-  var TILT_SENS = 2.4;           // sensitivity multiplier (higher = smaller motion needed)
+  var TILT_SENS = 1.6;           // sensitivity multiplier (higher = smaller motion needed)
   var isIOS = /iP(hone|ad|od)/.test(navigator.userAgent);
 
   var theta=0, omega=0;
@@ -544,9 +567,19 @@
     return 0;
   }
 
+  // ---------------- portrait lock ----------------
+  function lockPortrait(){
+    try {
+      if(screen.orientation && typeof screen.orientation.lock === 'function'){
+        screen.orientation.lock('portrait').catch(function(){ /* unsupported: CSS overlay handles it */ });
+      }
+    } catch(e){ /* ignore */ }
+  }
+
   // ---------------- game flow ----------------
   $('btn-start-game').addEventListener('click', function(){
     attachSensors(); // re-attach on user gesture (some browsers require it)
+    lockPortrait();  // try to lock portrait (Android Chrome); CSS overlay is the fallback
     levelIndex = 0; results = [];
     resizeCanvas();
     startLevel(0);
@@ -595,27 +628,30 @@
     var cfg = LEVELS[levelIndex];
     elapsed += dt;
 
-    // wind update
+    // wind = wandering angular offset that nudges the target lean
     if(cfg.wind){
       if(elapsed*1000 >= nextWindChangeAt){
         var range = cfg.windMax - cfg.windMin;
         nextWindChangeAt = elapsed*1000 + cfg.windMin + Math.random()*range;
-        windTarget = (Math.random()*2-1) * cfg.windAmp;
+        windTarget = (Math.random()*2-1) * cfg.windAmp; // radians
       }
-      windTorque += (windTarget - windTorque) * Math.min(1, dt*1.2);
+      windTorque += (windTarget - windTorque) * Math.min(1, dt*1.5);
     } else {
-      windTorque = 0;
+      windTarget = 0;
+      windTorque += (0 - windTorque) * Math.min(1, dt*1.5);
     }
 
-    // control input -> physics
-    var u = computeControlInput();
-    var angAcc = G*Math.sin(theta) - CONTROL_GAIN*u*Math.cos(theta) - DAMPING*omega + windTorque;
-    omega += angAcc*dt;
+    // game-like control: phone tilt sets a target lean, pendulum springs toward it
+    var u = computeControlInput();                 // -1..1
+    var targetTheta = u*MAX_TILT + windTorque;     // desired lean + wind push
+    targetTheta = Math.max(-SOFT_WALL, Math.min(SOFT_WALL, targetTheta));
+    var accel = STIFFNESS*(targetTheta - theta) - SPRING_DAMP*omega;
+    omega += accel*dt;
     theta += omega*dt;
 
     // soft wall
-    if(theta > SOFT_WALL){ theta = SOFT_WALL; omega = Math.min(0, omega*0.2); }
-    if(theta < -SOFT_WALL){ theta = -SOFT_WALL; omega = Math.max(0, omega*0.2); }
+    if(theta > SOFT_WALL){ theta = SOFT_WALL; omega = Math.min(0, omega); }
+    if(theta < -SOFT_WALL){ theta = -SOFT_WALL; omega = Math.max(0, omega); }
 
     // scoring accumulation
     var inRange = Math.abs(theta) < SAFE_ANGLE;
@@ -633,9 +669,9 @@
     $('hold-label-val').textContent = holdTimer.toFixed(1)+' / '+HOLD_TARGET.toFixed(1)+'s';
     $('angle-val').textContent = (theta*180/Math.PI).toFixed(1)+'°';
     if(cfg.wind){
-      var arrow = windTorque > 0.15 ? '→' : (windTorque < -0.15 ? '←' : '·');
+      var arrow = windTorque > 0.03 ? '→' : (windTorque < -0.03 ? '←' : '·');
       $('wind-arrow').textContent = arrow;
-      $('wind-arrow').style.opacity = Math.min(1, 0.3+Math.abs(windTorque)/2.3);
+      $('wind-arrow').style.opacity = Math.min(1, 0.35+Math.abs(windTorque)/cfg.windAmp*0.65);
     }
 
     // live control diagnostics + dynamic hint
