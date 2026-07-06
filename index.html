@@ -178,6 +178,23 @@
     text-align:center; font-family:var(--mono); font-size:10.5px; color:var(--text-low);
     margin-top:10px; letter-spacing:.04em;
   }
+  .game-foot{ margin-top:8px; }
+  .mini-btn{
+    display:block; margin:0 auto; font-family:var(--sans); font-size:12px; font-weight:600;
+    color:var(--text-mid); background:var(--bg-panel-raised); border:1px solid var(--line-bright);
+    border-radius:999px; padding:7px 16px; cursor:pointer;
+  }
+  .mini-btn:active{ transform:scale(.96); }
+  .sensor-debug{
+    text-align:center; font-family:var(--mono); font-size:10px; color:var(--text-low);
+    margin-top:6px; letter-spacing:.03em;
+  }
+  .sensor-status{
+    font-family:var(--mono); font-size:11px; text-align:center; padding:9px 12px;
+    border-radius:10px; margin-bottom:12px; letter-spacing:.02em; line-height:1.4;
+  }
+  .sensor-status.wait{ color:var(--warn); background:rgba(255,184,77,0.1); border:1px solid rgba(255,184,77,0.3); }
+  .sensor-status.ok{ color:var(--safe); background:rgba(62,224,138,0.1); border:1px solid rgba(62,224,138,0.3); }
 
   /* ---- overlay ---- */
   #overlay{
@@ -271,6 +288,7 @@
     </div>
 
     <div class="spacer"></div>
+    <div class="sensor-status wait" id="sensor-status">⟳ 센서 신호 대기 중 · 기기를 살짝 기울여 보세요</div>
     <button class="btn secondary" id="perm-btn">센서 권한 허용하기</button>
     <button class="btn" id="btn-start-game">레벨 1 시작</button>
   </div>
@@ -297,7 +315,11 @@
         <button class="btn" id="ov-continue" style="max-width:220px;">계속하기</button>
       </div>
     </div>
-    <div class="control-hint" id="control-hint">휴대전화를 좌우로 기울여 조작하세요</div>
+    <div class="game-foot">
+      <button class="mini-btn" id="flip-btn">⇄ 방향 반대로</button>
+      <div class="control-hint" id="control-hint">휴대전화를 좌우로 기울여 조작하세요</div>
+      <div class="sensor-debug" id="sensor-debug">센서 확인 중…</div>
+    </div>
   </div>
 
   <!-- ============ SUMMARY ============ -->
@@ -348,10 +370,19 @@
   var playerName = "";
   var levelIndex = 0;
   var results = []; // per level: {cleared, clearTime, timeInRangeRatio, avgDeviation, score}
-  var controlInput = 0; // -1..1
   var usingTilt = false;
   var keyLeft=false, keyRight=false;
   var dragActive=false, dragStartX=0, dragCurrentX=0;
+
+  // sensor state
+  var sensorAttached = false;
+  var sensorActive = false;      // true once any sensor delivers data
+  var sensorSource = '';         // 'motion' | 'orientation'
+  var rawTilt = 0;               // smoothed sensor tilt, -1..1
+  var lastSensorVal = 0;         // raw value for on-screen diagnostics
+  var axisSign = 1;              // flip toggle for inverted direction
+  var TILT_SENS = 2.4;           // sensitivity multiplier (higher = smaller motion needed)
+  var isIOS = /iP(hone|ad|od)/.test(navigator.userAgent);
 
   var theta=0, omega=0;
   var windTorque=0, windTarget=0, nextWindChangeAt=0;
@@ -391,40 +422,87 @@
     setupPermissionButton();
   });
 
-  // ---------------- device orientation permission ----------------
+  // ---------------- sensor handling ----------------
   function setupPermissionButton(){
-    var needsPermission = typeof DeviceMotionEvent !== 'undefined' &&
+    var needMotionPerm = typeof DeviceMotionEvent !== 'undefined' &&
       typeof DeviceMotionEvent.requestPermission === 'function';
-    if(needsPermission){
+    var needOrientPerm = typeof DeviceOrientationEvent !== 'undefined' &&
+      typeof DeviceOrientationEvent.requestPermission === 'function';
+
+    if(needMotionPerm || needOrientPerm){
+      // iOS 13+ : explicit permission required, must be triggered by a tap
       $('perm-btn').style.display = 'block';
       $('perm-btn').textContent = '센서 권한 허용하기';
+      $('perm-btn').disabled = false;
       $('perm-btn').onclick = function(){
-        DeviceMotionEvent.requestPermission().then(function(state){
-          if(state === 'granted'){
-            attachMotion();
+        var reqs = [];
+        reqs.push(needMotionPerm ? DeviceMotionEvent.requestPermission() : Promise.resolve('granted'));
+        reqs.push(needOrientPerm ? DeviceOrientationEvent.requestPermission() : Promise.resolve('granted'));
+        Promise.all(reqs).then(function(states){
+          if(states.indexOf('denied') === -1){
+            attachSensors();
             $('perm-btn').textContent = '권한 허용됨 ✓';
             $('perm-btn').disabled = true;
           } else {
-            $('perm-btn').textContent = '권한이 거부되었습니다 (버튼/드래그로 조작)';
+            $('perm-btn').textContent = '권한 거부됨 · 화면 드래그로 조작하세요';
           }
         }).catch(function(){
-          $('perm-btn').textContent = '센서를 사용할 수 없어 버튼으로 조작합니다';
+          $('perm-btn').textContent = '센서를 쓸 수 없음 · 화면 드래그로 조작하세요';
         });
       };
     } else {
-      attachMotion(); // android / desktop: no explicit permission needed
+      // android / desktop : no permission prompt
+      attachSensors();
     }
+    startSensorStatusWatch();
   }
 
-  function attachMotion(){
-    window.addEventListener('devicemotion', function(e){
-      var g = e.accelerationIncludingGravity;
-      if(!g || g.x === null || g.x === undefined) return;
-      usingTilt = true;
-      var raw = Math.max(-1, Math.min(1, g.x/6.5));
-      // exponential smoothing to tame accelerometer jitter
-      controlInput = controlInput*0.72 + raw*0.28;
-    }, true);
+  function attachSensors(){
+    if(sensorAttached) return;
+    sensorAttached = true;
+    window.addEventListener('devicemotion', onMotion, true);
+    window.addEventListener('deviceorientation', onOrient, true);
+  }
+
+  function onMotion(e){
+    var g = e.accelerationIncludingGravity;
+    if(!g || g.x === null || g.x === undefined) return;
+    var mag = Math.sqrt(g.x*g.x + g.y*g.y + g.z*g.z) || 9.81;
+    var raw = g.x / mag;                 // sin(roll angle), naturally -1..1
+    if(isIOS) raw = -raw;                // iOS negates accel vs spec
+    lastSensorVal = raw;
+    sensorActive = true;
+    sensorSource = 'motion';
+    usingTilt = true;
+    rawTilt = rawTilt*0.7 + raw*0.3;     // smoothing
+  }
+
+  function onOrient(e){
+    if(sensorSource === 'motion') return; // motion wins if both available
+    if(e.gamma === null || e.gamma === undefined) return;
+    var raw = Math.max(-1, Math.min(1, e.gamma/45));
+    lastSensorVal = raw;
+    sensorActive = true;
+    sensorSource = 'orientation';
+    usingTilt = true;
+    rawTilt = rawTilt*0.7 + raw*0.3;
+  }
+
+  function startSensorStatusWatch(){
+    updateSensorStatus();
+    if(startSensorStatusWatch._t) clearInterval(startSensorStatusWatch._t);
+    startSensorStatusWatch._t = setInterval(updateSensorStatus, 250);
+  }
+  function updateSensorStatus(){
+    var el = $('sensor-status');
+    if(!el) return;
+    if(sensorActive){
+      el.className = 'sensor-status ok';
+      el.textContent = '✓ 센서 정상 · 값 ' + lastSensorVal.toFixed(2) + ' (기울여 확인)';
+    } else {
+      el.className = 'sensor-status wait';
+      el.textContent = '⟳ 센서 신호 대기 중 · 기기를 살짝 기울여 보세요';
+    }
   }
 
   // fallback: keyboard
@@ -437,7 +515,7 @@
     if(e.key==='ArrowRight') keyRight=false;
   });
 
-  // fallback: touch/pointer drag on stage
+  // fallback: touch/pointer drag on stage (always available as override)
   function stagePointerDown(x){ dragActive=true; dragStartX=x; dragCurrentX=x; }
   function stagePointerMove(x){ if(!dragActive) return; dragCurrentX=x; }
   function stagePointerUp(){ dragActive=false; }
@@ -449,18 +527,26 @@
   window.addEventListener('mousemove', function(e){ stagePointerMove(e.clientX); });
   window.addEventListener('mouseup', stagePointerUp);
 
+  // flip direction button
+  $('flip-btn').addEventListener('click', function(){ axisSign *= -1; });
+
   function computeControlInput(){
-    if(usingTilt) return controlInput;
-    if(keyLeft || keyRight) return (keyRight?1:0) + (keyLeft?-1:0);
+    // drag always overrides — guarantees playability even if sensors misbehave
     if(dragActive){
       var d = (dragCurrentX - dragStartX) / 90;
       return Math.max(-1, Math.min(1, d));
+    }
+    if(keyLeft || keyRight) return (keyRight?1:0) + (keyLeft?-1:0);
+    if(usingTilt){
+      var u = axisSign * rawTilt * TILT_SENS;
+      return Math.max(-1, Math.min(1, u));
     }
     return 0;
   }
 
   // ---------------- game flow ----------------
   $('btn-start-game').addEventListener('click', function(){
+    attachSensors(); // re-attach on user gesture (some browsers require it)
     levelIndex = 0; results = [];
     resizeCanvas();
     startLevel(0);
@@ -550,6 +636,20 @@
       var arrow = windTorque > 0.15 ? '→' : (windTorque < -0.15 ? '←' : '·');
       $('wind-arrow').textContent = arrow;
       $('wind-arrow').style.opacity = Math.min(1, 0.3+Math.abs(windTorque)/2.3);
+    }
+
+    // live control diagnostics + dynamic hint
+    var dbg = $('sensor-debug');
+    var hint = $('control-hint');
+    if(dragActive){
+      dbg.textContent = '🖐 드래그 입력 ' + computeControlInput().toFixed(2);
+      hint.textContent = '드래그로 조작 중';
+    } else if(usingTilt && sensorActive){
+      dbg.textContent = '📱 기울기 ' + (axisSign*rawTilt).toFixed(2) + ' → 제어 ' + computeControlInput().toFixed(2);
+      hint.textContent = '휴대전화를 좌우로 기울여 조작하세요';
+    } else if(elapsed > 1.5){
+      dbg.textContent = '⚠ 센서 신호 없음 · https 주소인지 확인하세요';
+      hint.textContent = '화면을 좌우로 드래그해서 조작하세요';
     }
 
     // end conditions
