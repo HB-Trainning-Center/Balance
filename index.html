@@ -6,6 +6,59 @@
 <title>균형 제어 미션 | Balance Control Mission</title>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Jua&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css">
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+  import { getDatabase, ref, push, query, orderByChild, limitToLast, get }
+    from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyC1qDnwaB9mTpX3vNDVgYgvimRq5yY5Bi4",
+    authDomain: "balance-9a3dd.firebaseapp.com",
+    databaseURL: "https://balance-9a3dd-default-rtdb.asia-southeast1.firebasedatabase.app",
+    projectId: "balance-9a3dd",
+    storageBucket: "balance-9a3dd.firebasestorage.app",
+    messagingSenderId: "943120317663",
+    appId: "1:943120317663:web:8e22d8630aefb08d3a7d6a"
+  };
+
+  function startOfTodayMs(){
+    const d = new Date(); d.setHours(0,0,0,0); return d.getTime();
+  }
+
+  try {
+    const app = initializeApp(firebaseConfig);
+    const db = getDatabase(app);
+
+    window.RankAPI = {
+      ready: true,
+      async submit(entry){
+        await push(ref(db, 'scores'), entry);
+      },
+      async fetchRanking(scope, lim){
+        if(scope === 'today'){
+          const q = query(ref(db,'scores'), orderByChild('ts'), limitToLast(400));
+          const snap = await get(q);
+          const start = startOfTodayMs();
+          const arr = [];
+          snap.forEach(c => { const v = c.val(); if(v && typeof v.ts==='number' && v.ts>=start) arr.push(v); });
+          arr.sort((a,b)=> b.score - a.score);
+          return arr.slice(0, lim);
+        } else {
+          const q = query(ref(db,'scores'), orderByChild('score'), limitToLast(100));
+          const snap = await get(q);
+          const arr = [];
+          snap.forEach(c => arr.push(c.val()));
+          arr.sort((a,b)=> b.score - a.score);
+          return arr.slice(0, lim);
+        }
+      }
+    };
+    window.dispatchEvent(new Event('rankapi-ready'));
+  } catch(e){
+    console.error('Firebase init failed:', e);
+    window.RankAPI = null;
+  }
+</script>
 <style>
   :root{
     --bg-void: #120a26;
@@ -182,6 +235,44 @@
 
   table.breakdown td.mult{ color:var(--wind); font-family:var(--mono); }
 
+  /* ---- ranking ---- */
+  .rank-save-status{
+    font-family:var(--mono); font-size:11.5px; text-align:center; padding:9px 12px;
+    border-radius:10px; margin-top:12px; min-height:18px;
+  }
+  .rank-save-status.ok{ color:var(--safe); background:rgba(62,224,138,0.1); border:1px solid rgba(62,224,138,0.3); }
+  .rank-save-status.err{ color:var(--danger); background:rgba(255,77,120,0.1); border:1px solid rgba(255,77,120,0.3); }
+
+  #screen-rank{ padding:28px 24px; }
+  .rank-tabs{ display:flex; gap:8px; margin:6px 0 14px; }
+  .rank-tab{
+    flex:1; font-family:var(--sans); font-weight:600; font-size:14px; color:var(--text-mid);
+    background:var(--bg-panel-raised); border:1px solid var(--line-bright); border-radius:999px;
+    padding:11px 0; cursor:pointer; transition:all .15s ease;
+  }
+  .rank-tab.active{
+    color:#0d0820; background:linear-gradient(100deg, var(--grad-a), var(--grad-b));
+    border-color:transparent;
+  }
+  .rank-list-wrap{ flex:1; overflow-y:auto; min-height:0; }
+  .rank-loading{ text-align:center; color:var(--text-low); font-family:var(--mono); font-size:12px; padding:32px 0; }
+  .rank-list{ list-style:none; margin:0; padding:0; }
+  .rank-row{
+    display:flex; align-items:center; gap:12px; padding:12px 14px; margin-bottom:8px;
+    background:var(--bg-panel); border:1px solid var(--line); border-radius:12px;
+  }
+  .rank-row.mine{ border-color:var(--safe); background:rgba(62,224,138,0.08); box-shadow:0 0 16px rgba(62,224,138,0.15); }
+  .rank-pos{
+    font-family:var(--mono); font-size:15px; font-weight:700; color:var(--text-mid);
+    width:30px; text-align:center; flex-shrink:0;
+  }
+  .rank-name{ flex:1; font-size:14px; font-weight:600; color:var(--text-hi); display:flex; align-items:center; gap:8px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .rank-badge{
+    font-family:var(--mono); font-size:9px; color:var(--wind); background:rgba(47,216,245,0.12);
+    border:1px solid rgba(47,216,245,0.3); border-radius:6px; padding:2px 6px; flex-shrink:0;
+  }
+  .rank-score{ font-family:var(--mono); font-size:16px; font-weight:700; color:var(--safe); flex-shrink:0; }
+
   .hold-track{
     height:10px; background:var(--bg-panel-raised); border:1px solid var(--line);
     border-radius:6px; overflow:hidden; margin-bottom:14px; position:relative;
@@ -301,6 +392,7 @@
     <input type="text" class="field" id="name-input" placeholder="이름을 입력하세요" maxlength="12" autocomplete="off">
     <div class="spacer"></div>
     <button class="btn" id="btn-to-instructions" disabled>다음</button>
+    <button class="btn secondary" id="btn-view-rank" style="margin-top:10px;">🏆 랭킹 확인</button>
   </div>
 
   <!-- ============ INSTRUCTIONS ============ -->
@@ -388,8 +480,26 @@
       <tbody id="summary-body"></tbody>
     </table>
     <p class="sub" style="text-align:center;">가장 큰 배점은 <b style="color:var(--text-hi)">클리어 속도</b>에 있습니다. 빠르고 안정적으로 제어할수록 높은 점수를 얻습니다.</p>
+    <div class="rank-save-status" id="rank-save-status"></div>
     <div class="spacer"></div>
-    <button class="btn secondary" id="btn-restart">처음부터 다시하기</button>
+    <button class="btn" id="btn-to-rank">🏆 전체 랭킹 보기</button>
+    <button class="btn secondary" id="btn-restart" style="margin-top:10px;">처음부터 다시하기</button>
+  </div>
+
+  <!-- ============ RANKING ============ -->
+  <div class="screen" id="screen-rank">
+    <div class="eyebrow">Leaderboard</div>
+    <div class="title" style="font-size:22px;">랭킹</div>
+    <div class="rank-tabs">
+      <button class="rank-tab active" id="tab-all" data-scope="all">전체</button>
+      <button class="rank-tab" id="tab-today" data-scope="today">오늘</button>
+    </div>
+    <div class="rank-list-wrap">
+      <div class="rank-loading" id="rank-loading">불러오는 중…</div>
+      <ol class="rank-list" id="rank-list"></ol>
+    </div>
+    <div class="spacer"></div>
+    <button class="btn secondary" id="btn-rank-back">← 처음으로</button>
   </div>
 
 </div>
@@ -461,6 +571,8 @@
   var prevInRange=false, curInRange=false;
   // particles
   var particles=[], ambientAcc=0, lastTipX=0, lastTipY=0;
+  // wind streaks (visual)
+  var windStreaks=[], windSpawnAcc=0, effWind=0;
   // heartbeat haptic timer
   var heartbeatAcc=0;
   // countdown beep tracker
@@ -473,7 +585,7 @@
   var $ = function(id){ return document.getElementById(id); };
   var screens = {
     start: $('screen-start'), instructions: $('screen-instructions'),
-    game: $('screen-game'), summary: $('screen-summary')
+    game: $('screen-game'), summary: $('screen-summary'), rank: $('screen-rank')
   };
   function showScreen(name){
     Object.keys(screens).forEach(function(k){ screens[k].classList.toggle('active', k===name); });
@@ -738,6 +850,7 @@
     gustActive = false; gustWarning = false; gustEndAt = 0; gustWarnEndAt = 0; gustSmooth = 0;
     prevInRange = false; curInRange = false;
     particles = []; ambientAcc = 0; heartbeatAcc = 0; lastBeepSecond = 99;
+    windStreaks = []; windSpawnAcc = 0; effWind = 0;
     var gcfg = LEVELS[i];
     nextGustAt = gcfg.gust ? (gcfg.gustMin + Math.random()*(gcfg.gustMax-gcfg.gustMin)) : Infinity;
     $('combo-tag').style.display = 'none';
@@ -815,6 +928,7 @@
     }
     // ease the gust push in/out for a whoosh feel
     gustSmooth += (gustOffset - gustSmooth) * Math.min(1, dt*4);
+    effWind = windTorque + gustSmooth; // total wind push, used for visuals
 
     // game-like control: phone tilt sets a target lean, pendulum springs toward it
     var u = computeControlInput();                       // -1..1
@@ -976,10 +1090,69 @@
     };
   }
 
+  // ---------------- wind visuals ----------------
+  function drawWind(w, h){
+    var mag = Math.abs(effWind);
+    if(mag < 0.012 && windStreaks.length === 0) return;
+    var dir = effWind >= 0 ? 1 : -1;   // +1 = blowing left->right
+    var WIND_REF = 0.35;               // ~20deg counts as strong
+    var norm = Math.min(1, mag/WIND_REF);
+    var gustBoost = mag > 0.28 ? 1.6 : 1; // extra intensity during gusts
+
+    // spawn streaks proportional to wind strength
+    windSpawnAcc += norm*1.0*gustBoost + 0.015;
+    while(windSpawnAcc >= 1){
+      windSpawnAcc -= 1;
+      var speed = (70 + norm*380 + Math.random()*50) * gustBoost;
+      windStreaks.push({
+        x: dir>0 ? -30 : w+30,
+        y: 0.06*h + Math.random()*0.74*h,
+        len: 22 + speed*0.13,
+        vx: speed*dir,
+        a: (0.10 + norm*0.5) * (0.55+Math.random()*0.45) * gustBoost
+      });
+      if(windStreaks.length > 100) windStreaks.shift();
+    }
+
+    // update + draw streaks
+    var dt = 0.016;
+    for(var i=windStreaks.length-1;i>=0;i--){
+      var s = windStreaks[i];
+      s.x += s.vx*dt;
+      if(s.x < -70 || s.x > w+70){ windStreaks.splice(i,1); continue; }
+      var sgn = s.vx>=0 ? 1 : -1;
+      var x2 = s.x - sgn*s.len;
+      var grad = ctx.createLinearGradient(s.x, s.y, x2, s.y);
+      var col = gustBoost>1 ? '120,225,255' : '47,216,245';
+      grad.addColorStop(0, 'rgba('+col+','+Math.min(1,s.a).toFixed(3)+')');
+      grad.addColorStop(1, 'rgba('+col+',0)');
+      ctx.strokeStyle = grad; ctx.lineWidth = 2; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(x2, s.y); ctx.stroke();
+    }
+
+    // upwind-edge direction chevrons
+    if(mag > 0.02){
+      var ex = dir>0 ? 16 : w-16;
+      var pulse = 0.45 + 0.4*Math.sin(Date.now()/170);
+      ctx.strokeStyle = 'rgba('+(gustBoost>1?'255,120,150':'47,216,245')+','+(norm*0.75*pulse).toFixed(3)+')';
+      ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      for(var c=0;c<3;c++){
+        var cx = ex + dir*c*11;
+        ctx.beginPath();
+        ctx.moveTo(cx - dir*6, h*0.5-11);
+        ctx.lineTo(cx + dir*6, h*0.5);
+        ctx.lineTo(cx - dir*6, h*0.5+11);
+        ctx.stroke();
+      }
+    }
+  }
+
   // ---------------- rendering ----------------
   function draw(){
     var w = canvas.width/dpr, h = canvas.height/dpr;
     ctx.clearRect(0,0,w,h);
+
+    drawWind(w, h); // far background wind streaks
 
     var pivotX = w/2, pivotY = h - 46;
     var rodLen = Math.min(h*0.62, 220);
@@ -1110,7 +1283,97 @@
         '<td class="score">'+r.score+'</td>';
       body.appendChild(tr);
     });
+
+    // record this run and submit to leaderboard
+    lastRunEntry = {
+      name: playerName || '익명',
+      score: total,
+      cleared: allCleared,
+      ts: Date.now(),
+      date: localDateStr()
+    };
+    submitScore(lastRunEntry);
   }
+
+  // ---------------- ranking ----------------
+  var lastRunEntry = null;
+  var currentScope = 'all';
+
+  function localDateStr(){
+    var d = new Date();
+    var m = ('0'+(d.getMonth()+1)).slice(-2), day = ('0'+d.getDate()).slice(-2);
+    return d.getFullYear()+'-'+m+'-'+day;
+  }
+
+  function submitScore(entry){
+    var el = $('rank-save-status');
+    if(!window.RankAPI){
+      el.textContent = '⚠ 랭킹 서버에 연결할 수 없습니다 (오프라인/차단).';
+      el.className = 'rank-save-status err';
+      return;
+    }
+    el.textContent = '랭킹에 점수 등록 중…';
+    el.className = 'rank-save-status';
+    window.RankAPI.submit(entry).then(function(){
+      el.textContent = '✓ 랭킹에 등록되었습니다';
+      el.className = 'rank-save-status ok';
+    }).catch(function(err){
+      el.textContent = '⚠ 랭킹 등록 실패 · 데이터베이스 권한을 확인하세요';
+      el.className = 'rank-save-status err';
+    });
+  }
+
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, function(c){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+    });
+  }
+
+  function loadRanking(scope){
+    currentScope = scope;
+    $('tab-all').classList.toggle('active', scope==='all');
+    $('tab-today').classList.toggle('active', scope==='today');
+    var listEl = $('rank-list'), loading = $('rank-loading');
+    listEl.innerHTML = '';
+    loading.style.display = 'block';
+    loading.textContent = '불러오는 중…';
+
+    if(!window.RankAPI){
+      loading.textContent = '랭킹 서버에 연결할 수 없습니다.';
+      return;
+    }
+    window.RankAPI.fetchRanking(scope, 20).then(function(rows){
+      loading.style.display = 'none';
+      listEl.innerHTML = '';
+      if(!rows || !rows.length){
+        loading.style.display = 'block';
+        loading.textContent = (scope==='today') ? '오늘 기록이 아직 없습니다.' : '아직 기록이 없습니다.';
+        return;
+      }
+      rows.forEach(function(r, i){
+        var li = document.createElement('li');
+        li.className = 'rank-row';
+        var isMine = lastRunEntry && r.ts === lastRunEntry.ts && r.name === lastRunEntry.name;
+        if(isMine) li.className += ' mine';
+        var medal = i===0 ? '🥇' : (i===1 ? '🥈' : (i===2 ? '🥉' : (i+1)));
+        var badge = r.cleared ? '<span class="rank-badge">미션성공</span>' : '';
+        li.innerHTML =
+          '<span class="rank-pos">'+medal+'</span>'+
+          '<span class="rank-name">'+escapeHtml(r.name||'익명')+badge+'</span>'+
+          '<span class="rank-score">'+r.score+'</span>';
+        listEl.appendChild(li);
+      });
+    }).catch(function(err){
+      loading.style.display = 'block';
+      loading.textContent = '불러오기 실패 · 네트워크/권한을 확인하세요.';
+    });
+  }
+
+  $('btn-view-rank').addEventListener('click', function(){ showScreen('rank'); loadRanking('all'); });
+  $('btn-to-rank').addEventListener('click', function(){ showScreen('rank'); loadRanking('all'); });
+  $('btn-rank-back').addEventListener('click', function(){ results = []; levelIndex = 0; showScreen('start'); });
+  $('tab-all').addEventListener('click', function(){ loadRanking('all'); });
+  $('tab-today').addEventListener('click', function(){ loadRanking('today'); });
 
   $('btn-restart').addEventListener('click', function(){
     results = []; levelIndex = 0;
